@@ -15,6 +15,7 @@ namespace Region_Buffs
     {
         private List<int> GloballyBanned;
         private static List<Buffee> Plrs;
+        private Thread WorkThread;
 
         #region Overrides
 
@@ -28,7 +29,7 @@ namespace Region_Buffs
         { get { return "Region Buffs"; } }
 
         public override Version Version
-        { get { return new System.Version(2, 1); } }
+        { get { return new Version(2, 1, 1); } }
 
         public PluginMain ( Main game ) : base(game)
         {
@@ -57,6 +58,13 @@ namespace Region_Buffs
                 ServerHooks.Leave -= OnLeave;
                 GameHooks.PostInitialize -= OnPost;
                 GameHooks.Initialize -= OnInit;
+                try
+                {
+                    WorkThread.Abort();
+                }
+                catch  // This shouldn't happen, but just in case.
+                {
+                }
             }
             base.Dispose(disposing);
         }
@@ -79,29 +87,10 @@ namespace Region_Buffs
             }
         }
 
-        private void SetUpConfig ( )
-        {
-            ConfigFile.SetupConfig();
-            GloballyBanned.Clear();
-            int errors = 0;
-            foreach (string str in Region_Buffs.ConfigFile.GlobalBannedBuffs.Where(s => !string.IsNullOrWhiteSpace(s)))
-            {
-                var buffs = TShock.Utils.GetBuffByName(str);
-
-                if (buffs.Count != 1) errors++;
-                else GloballyBanned.Add(buffs[0]);
-
-            }
-            if (errors > 0)
-            {
-                Console.WriteLine("Error with " + errors + " buff(s) in Buffed Region Config!");
-            }
-        }
-
         private void OnPost ( )
         {
-            SetUpConfig();
-            new Thread(UpdateThread).Start();
+            WorkThread = new Thread(UpdateThread);
+            WorkThread.Start();
         }
 
         #endregion
@@ -163,7 +152,7 @@ namespace Region_Buffs
                                     if (uint.TryParse(parts[1], out length))
                                     {
                                         length = Math.Max(100, length);
-                                        length = Math.Min(3600, length);
+                                        //length = Math.Min(3600, length);
                                     }
 
                                     //Console.Write("Parts: [0] = {0}, [1] = {1}. ", parts[0], parts[1]);
@@ -171,7 +160,7 @@ namespace Region_Buffs
                                     //Console.WriteLine("Searching {0}... matched: {1}", parts[0].Substring(1), string.Join(", ", TShock.Utils.GetBuffByName(parts[0].Substring(1))));
                                     if (buffByName.Count == 1)
                                     {
-                                        switch (buff[0])
+                                        switch (parts[0].Trim()[0])
                                         {
                                             case '+':
                                             AppliedBuffs.Add(new BuffProp(buffByName[0], region, length));
@@ -184,6 +173,8 @@ namespace Region_Buffs
                                             case '%':
                                             AllowedBuffs.Add(new BuffProp(buffByName[0], region, length));
                                             break;
+
+                                            default: AppliedBuffs.Add(new BuffProp(buffByName[0], region, length)); break;
                                         }
                                     }
 
@@ -316,6 +307,10 @@ namespace Region_Buffs
             {
                 list.Add("/rb reload - reloads the Region Buffs config file!");
             }
+            if (com.Player == TSPlayer.Server)
+            {
+                list.Add("/rb editconfig - opens the config editor window!");
+            }
             if (com.Parameters.Count == 0)
             {
                 if (list.Count == 1) com.Player.SendErrorMessage("Usage: " + list[0]);
@@ -379,10 +374,15 @@ namespace Region_Buffs
                     case "notify":
                     case "notifications":
                     {
-                        var buffee = Plrs.FirstOrDefault(b => b.Index == com.Player.Index);
-                        com.Player.SendSuccessMessage("You now are {0}notified upon recieving buffs and debuffs from Buffed Regions!".SFormat(
-                            buffee.GetInfo ? "not " : ""));
-                        buffee.GetInfo = !buffee.GetInfo;
+                        if (ConfigFile.GreetOnEnter)
+                        {
+                            var buffee = Plrs.FirstOrDefault(b => b.Index == com.Player.Index);
+                            com.Player.SendSuccessMessage("You now are {0}notified upon recieving buffs and debuffs from Buffed Regions!".SFormat(
+                                buffee.GetInfo ? "not " : ""));
+                            buffee.GetInfo = !buffee.GetInfo;
+                        }
+                        else com.Player.SendErrorMessage("Region notifications are not toggleable on this server at this time!");
+
                         return;
                     }
 
@@ -391,7 +391,6 @@ namespace Region_Buffs
                     #region reload
                     case "reload":
                     case "reloadconfig":
-                    case "config":
                     {
                         if (!com.Player.Group.HasPermission(Permissions.maintenance))
                         {
@@ -399,12 +398,32 @@ namespace Region_Buffs
                             return;
                         }
 
-                        SetUpConfig();
+                        ConfigFile.SetupConfig();
                         com.Player.SendInfoMessage("Config reloaded. Check console for errors.");
                         return;
                     }
                     #endregion
+/*
+                    #region editconfig
+                    case "editconfig":
+                    case "openconfig":
+                    {
+                        if (com.Player == TSPlayer.Server)
+                        {
+                            TSPlayer.Server.SendInfoMessage("Opening config editor now...");
+                            var Form = new Config_Editor();
+                            Form.Show(); // open it
+                        }
+                        else if (com.Player.Group == new SuperAdminGroup())
+                        {
+                            com.Player.SendErrorMessage("This command must be executed through the console.");
+                        }
+                        else { com.Player.SendErrorMessage("You do not have permission for /rb openconfig!"); }
 
+                        return;
+                    }
+                    #endregion
+                        */
                     default: com.Player.SendErrorMessage("Invalid subcommand!"); return;
                 }
             }
